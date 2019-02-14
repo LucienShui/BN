@@ -33,53 +33,39 @@
 	
 template <typename type>
 struct Descript {
-	int n, c, h, w, size;
+	int n, c, h, w;
 	void set(int _n, int _c, int _h, int _w) {
 		n = _n, c = _c, h = _h, w = _w;
-		size = n * c * h * w;
 	}
 };
 
 template <typename type>
-void read_(float *m, const Descript<type> &desc) {
-	for (int i = 0; i < desc.n; i++) {
-		for (int j = 0; j < desc.c; j++) {
-			for (int x = 0; x < desc.h; x++) {
-				for (int y = 0; y < desc.w; y++) scanf("%f", m + y);
-				m += desc.w;
-			}
-		}
-	}
-}
-
-template <typename type>
-void read(float *m, const Descript<type> &desc) {
-	int sz = desc.size;
-	// int sz = desc.n * desc.c * desc.h * desc.w * sizeof(float);
-	float *buf = (float *) malloc(sz);
-	read_(buf, desc);
-	CUDA_CALL(cudaMemcpy(m, buf, sz, cudaMemcpyHostToDevice));
-	free(buf);
-}
-
-template <typename type>
-void show_(float *m, const Descript<type> &desc) {
+void print(float *m, const Descript<type> &desc) {
+	float buf[desc.n][desc.c][desc.h][desc.w];
+	CUDA_CALL(cudaMemcpy(buf, m, sizeof(buf), cudaMemcpyDeviceToHost));
 	for (int i = 0; i < desc.n; i++) {
 		for (int j = 0; j < desc.c; j++) {
 			for (int x = 0; x < desc.h; x++) {
 				for (int y = 0; y < desc.w; y++) {
-					int idx = 
-						i * desc.c * desc.h * desc.w +
-						j * desc.h * desc.w +
-						x * desc.w + 
-						y;
-					printf("%f%c", m[idx], y == desc.w - 1 ? '\n' : ' ');
+					printf("%f%c", buf[i][j][x][y], y == desc.w - 1 ? '\n' : ' ');
 				}
 			}
 			putchar('\n');
 		}
 	}
 }
+
+template <typename type>
+void read(float *m, const Descript<type> &desc) {
+	float buf[desc.n][desc.c][desc.h][desc.w];
+	for (int n = 0; n < desc.n; n++) 
+		for (int c = 0; c < desc.c; c++)
+			for (int i = 0; i < desc.h; i++)
+				for (int j = 0; j < desc.w; j++) 
+					scanf("%f", buf[n][c][i] + j);
+	CUDA_CALL(cudaMemcpy(m, buf, sizeof(buf), cudaMemcpyHostToDevice));
+}
+
 int main() {
 	int n, c, h, w;
 	scanf("%d%d%d%d", &n, &c, &h, &w);
@@ -101,18 +87,18 @@ int main() {
 		input_output_desc.w
 	));
 
-	float zero = 0, one = 1, *d_in_data, *d_out_data, *h_out_data;
+	float zero = 0, one = 1, *d_in_data, *d_out_data;
 	size_t sz = n * c * h * w * sizeof(float);
 
 	CUDA_CALL(cudaMalloc(&d_in_data, sz));
 	CUDA_CALL(cudaMalloc(&d_out_data, sz));
-	h_out_data = (float *) malloc(sz);
 
 	read(d_in_data, input_output_desc);
 
 	scanf("%d%d%d", &c, &h, &w);
 	Descript<float> other_desc;
 	other_desc.set(1, c, h, w);
+	sz = 1 * c * h * w * sizeof(float);
 	cudnnTensorDescriptor_t cudnn_other_desc;
 	CUDNN_CALL(cudnnCreateTensorDescriptor(&cudnn_other_desc));
 	CUDNN_CALL(cudnnSetTensor4dDescriptor(
@@ -146,25 +132,24 @@ int main() {
 	NULL_CHECK(d_variance);
 
 	CUDNN_CALL(cudnnBatchNormalizationForwardInference(
-		handle,  // handle
-		CUDNN_BATCHNORM_SPATIAL,
-		// CUDNN_BATCHNORM_PER_ACTIVATION,
+		handle,
+		// CUDNN_BATCHNORM_SPATIAL, // 1xCx1x1
+		CUDNN_BATCHNORM_PER_ACTIVATION, // 1xCxHxW
 		&one,
 		&zero,
-		cudnn_input_output_desc, // xDesc
-		d_in_data, 
-		cudnn_input_output_desc, // yDesc
+		cudnn_input_output_desc,
+		d_in_data,
+		cudnn_input_output_desc,
 		d_out_data,
-		cudnn_other_desc, // bnScaleBias
-		d_bias,
+		cudnn_other_desc,
 		d_scale,
+		d_bias,
 		d_mean,
 		d_variance,
 		CUDNN_BN_MIN_EPSILON
 	));
-	
-	CUDA_CALL(cudaMemcpy(h_out_data, d_out_data, input_output_desc.size, cudaMemcpyDeviceToHost));
-	show_(h_out_data, input_output_desc);
+
+	print(d_out_data, input_output_desc);
 
 	CUDA_CALL(cudaFree(d_in_data));
 	CUDA_CALL(cudaFree(d_out_data));
@@ -177,16 +162,4 @@ int main() {
 	return 0;
 }
 
-/*
-input data:
 
-3 1 1 1
-1 2 3
-
-1 1 1
-
-0
-1
-2
-0.6667
-*/
